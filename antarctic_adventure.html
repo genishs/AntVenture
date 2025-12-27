@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>남극탐험</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden; /* 스크롤바 숨김 */
+            background-color: #87CEEB; /* 하늘색 배경 */
+            font-family: 'Arial', sans-serif;
+            touch-action: none; /* 모바일에서 터치 제스처 방지 */
+            user-select: none; /* 텍스트 선택 방지 */
+            -webkit-user-select: none;
+        }
+        #gameContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #scoreBoard {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.5);
+            pointer-events: none; /* 터치 이벤트 통과 */
+        }
+        #startMsg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 40px;
+            font-weight: bold;
+            color: #333;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 40px;
+            border-radius: 20px;
+            cursor: pointer;
+            z-index: 10;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        /* 속도 증가 버튼 스타일 */
+        #speedBtn {
+            position: absolute;
+            top: 50%;
+            right: 20px;
+            transform: translateY(-50%);
+            width: 80px;
+            height: 80px;
+            background-color: rgba(255, 69, 0, 0.7); /* 주황색 반투명 */
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            text-align: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            cursor: pointer;
+            z-index: 5;
+            /* 모바일에서 터치 시 하이라이트 제거 */
+            -webkit-tap-highlight-color: transparent;
+        }
+        #speedBtn:active {
+            background-color: rgba(255, 69, 0, 0.9);
+            transform: translateY(-50%) scale(0.95);
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <div id="scoreBoard">Score: 0</div>
+    <div id="startMsg">클릭하여 시작<br><span style="font-size:20px">(PC: 방향키 / 모바일: 좌우 터치)</span></div>
+
+    <!-- 속도 증가 버튼 -->
+    <div id="speedBtn">SPEED<br>UP!</div>
+</div>
+
+<script>
+    // --- Web Audio API (남극탐험 BGM 구현) ---
+    let audioCtx;
+    let nextNoteTime = 0;
+    let beatCount = 0; // 16분 음표 단위 카운트
+    let schedulerTimer;
+
+    // 템포 설정 (남극탐험은 꽤 빠름)
+    const tempo = 150;
+    const secondsPer16th = 15.0 / tempo; // 16분 음표 하나의 시간
+
+    const NOTES = {
+        'G3': 196.00, 'A3': 220.00, 'B3': 246.94,
+        'C3': 130.81,
+        'C4': 261.63, 'D4': 293.66, 'E4': 329.63, 'F4': 349.23, 'G4': 392.00, 'A4': 440.00, 'B4': 493.88,
+        'C5': 523.25, 'D5': 587.33, 'E5': 659.25, 'F5': 698.46, 'G5': 783.99, 'A5': 880.00, 'B5': 987.77
+    };
+
+    // Intro Melody (16 ticks)
+    const introMelody = [
+        'G4', 'A4', 'B4', 'C5', null, null, null, null,
+        null, null, null, null, null, null, null, null
+    ];
+
+    // Main Melody (12 ticks per measure)
+    // 3/4박자, 16분음표 기준 12개 = 1마디
+    const mainMelody = [
+        // Measure 1: E5(8) G5(4)
+        'E5', null, null, null, null, null, null, null, 'G5', null, null, null,
+        // Measure 2: E5(4) D5(4) C5(4)
+        'E5', null, null, null, 'D5', null, null, null, 'C5', null, null, null,
+        // Measure 3: C5(8) D5(4)
+        'C5', null, null, null, null, null, null, null, 'D5', null, null, null,
+        // Measure 4: E5(4) D5(8)
+        'E5', null, null, null, 'D5', null, null, null, null, null, null, null,
+
+        // Measure 5: E5(8) G5(4)
+        'E5', null, null, null, null, null, null, null, 'G5', null, null, null,
+        // Measure 6: E5(4) D5(4) C5(4)
+        'E5', null, null, null, 'D5', null, null, null, 'C5', null, null, null,
+        // Measure 7: C5(8) E5(4)
+        'C5', null, null, null, null, null, null, null, 'E5', null, null, null,
+        // Measure 8: D5(12)
+        'D5', null, null, null, null, null, null, null, null, null, null, null,
+
+        // Measure 9: D5(8) E5(4)
+        'D5', null, null, null, null, null, null, null, 'E5', null, null, null,
+        // Measure 10: F5(4) E5(4) D5(4)
+        'F5', null, null, null, 'E5', null, null, null, 'D5', null, null, null,
+        // Measure 11: D5(8) E5(4)
+        'D5', null, null, null, null, null, null, null, 'E5', null, null, null,
+        // Measure 12: F5(12)
+        'F5', null, null, null, null, null, null, null, null, null, null, null,
+
+        // Measure 13: E5(8) F5(4)
+        'E5', null, null, null, null, null, null, null, 'F5', null, null, null,
+        // Measure 14: G5(4) F5(4) E5(4)
+        'G5', null, null, null, 'F5', null, null, null, 'E5', null, null, null,
+        // Measure 15: E5(8) D5(4)
+        'E5', null, null, null, null, null, null, null, 'D5', null, null, null,
+        // Measure 16: C5(12)
+        'C5', null, null, null, null, null, null, null, null, null, null, null
+    ];
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+
+    function playTone(freq, type, duration, time, vol = 0.1) {
+        if (!freq) return;
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(time);
+        gain.gain.setValueAtTime(vol, time);
+        // 짧게 끊어치는 느낌 (Staccato)
+        gain.gain.exponentialRampToValueAtTime(0.001, time + duration * 0.8);
+        osc.stop(time + duration);
+    }
+
+    function scheduleNote(time) {
+        // Intro 처리
+        if (beatCount < introMelody.length) {
+            const note = introMelody[beatCount];
+            if (note && NOTES[note]) {
+                playTone(NOTES[note], 'square', 0.1, time, 0.15);
+            }
+            // Intro Bass (C)
+            if (beatCount === 3) playTone(NOTES['C3'], 'triangle', 0.5, time, 0.2);
+        }
+        else {
+            // Main Theme Loop
+            const loopTick = beatCount - introMelody.length;
+            const currentLoopTick = loopTick % mainMelody.length;
+            const melodyNote = mainMelody[currentLoopTick];
+
+            // Melody
+            if (melodyNote && NOTES[melodyNote]) {
+                // 4분음표 길이 정도 (4틱)
+                playTone(NOTES[melodyNote], 'square', secondsPer16th * 3, time, 0.15);
+            }
+
+            // Bass & Chord (Waltz Rhythm: 쿵-짝-짝)
+            // 12틱이 한 마디
+            const measureTick = currentLoopTick % 12;
+            const measureIndex = Math.floor(currentLoopTick / 12);
+
+            // 코드 진행 (16마디)
+            const chordProgression = [
+                'C', 'C', 'C', 'G', 'C', 'C', 'C', 'G',
+                'G', 'G', 'G', 'G', 'C', 'C', 'G', 'C'
+            ];
+
+            const currentChord = chordProgression[measureIndex % 16] || 'C';
+
+            let rootFreq = NOTES['C3'];
+            let chordFreqs = [NOTES['E4'], NOTES['G4']];
+
+            if (currentChord === 'G') {
+                rootFreq = NOTES['G3'];
+                chordFreqs = [NOTES['B3'], NOTES['D4'], NOTES['F4']];
+            }
+
+            // 쿵 (첫 박자)
+            if (measureTick === 0) {
+                playTone(rootFreq, 'triangle', 0.3, time, 0.2);
+            }
+            // 짝 (두 번째 박자 - 4틱)
+            else if (measureTick === 4) {
+                chordFreqs.forEach(f => playTone(f, 'sawtooth', 0.1, time, 0.05));
+            }
+            // 짝 (세 번째 박자 - 8틱)
+            else if (measureTick === 8) {
+                chordFreqs.forEach(f => playTone(f, 'sawtooth', 0.1, time, 0.05));
+            }
+        }
+
+        beatCount++;
+    }
+
+    function audioScheduler() {
+        // 미리 0.1초 앞까지 예약
+        while (nextNoteTime < audioCtx.currentTime + 0.1) {
+            scheduleNote(nextNoteTime);
+            nextNoteTime += secondsPer16th;
+        }
+
+        if (window.gameRunning) {
+            schedulerTimer = requestAnimationFrame(audioScheduler);
+        }
+    }
+
+    function startBgm() {
+        initAudio();
+        nextNoteTime = audioCtx.currentTime + 0.1;
+        beatCount = 0;
+        audioScheduler();
+    }
+
+    function stopBgm() {
+        if (schedulerTimer) cancelAnimationFrame(schedulerTimer);
+
+        // 게임 오버 효과음
+        initAudio();
+        if(audioCtx) {
+            playTone(NOTES['G4'], 'sawtooth', 0.1, audioCtx.currentTime, 0.2);
+            playTone(NOTES['E4'], 'sawtooth', 0.1, audioCtx.currentTime + 0.1, 0.2);
+            playTone(NOTES['C4'], 'sawtooth', 0.4, audioCtx.currentTime + 0.2, 0.2);
+        }
+    }
+
+    // --- 게임 로직 ---
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreElement = document.getElementById('scoreBoard');
+    const startMsg = document.getElementById('startMsg');
+    const speedBtn = document.getElementById('speedBtn');
+
+    window.gameRunning = false;
+
+    let score = 0;
+    let speed = 5;
+    let scoreMultiplier = 1;
+    let obstacles = [];
+    let animationId;
+    let isUpPressed = false;
+
+    // 원근감 및 배경 설정
+    let horizonY; // 동적 설정
+    const maxZ = 3000;
+    const fov = 300;
+    const roadWidth = 1500;
+    let bgZOffset = 0;
+
+    // 곡선 도로 관련 변수
+    let currentCurve = 0;
+    let targetCurve = 0;
+    let curveTimer = 0;
+
+    // 배경 요소 (산맥, 구름)
+    const mountains = [];
+    for (let i = 0; i < 15; i++) {
+        mountains.push({
+            x: Math.random() * 3000 - 1000,
+            y: 0, // resize 시 설정
+            w: Math.random() * 400 + 200,
+            h: Math.random() * 150 + 50,
+            color: Math.random() > 0.5 ? '#B2EBF2' : '#E0F7FA'
+        });
+    }
+
+    const clouds = [];
+    for (let i = 0; i < 8; i++) {
+        clouds.push({
+            x: Math.random() * 2000,
+            y: Math.random() * 200,
+            w: Math.random() * 80 + 40,
+            speed: Math.random() * 0.2 + 0.05
+        });
+    }
+
+    // 펭귄 설정
+    const penguin = {
+        x: 0, // resize 시 설정
+        y: 0,
+        width: 50,
+        height: 70,
+        color: '#000000',
+        dx: 0,
+        speed: 7,
+        wobble: 0,
+        wobbleDirection: 1,
+        walkOffset: 0
+    };
+
+    // 화면 크기 조정 함수
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // 화면 높이의 40% 지점을 지평선으로 설정
+        horizonY = canvas.height * 0.4;
+
+        // 펭귄 위치 재설정 (바닥에서 일정 거리 위)
+        penguin.y = canvas.height - 150;
+
+        // 게임 시작 전이면 펭귄을 중앙에 배치
+        if (!window.gameRunning) {
+            penguin.x = canvas.width / 2 - penguin.width / 2;
+        }
+
+        // 산맥 위치 업데이트
+        mountains.forEach(mt => {
+            mt.y = horizonY;
+        });
+    }
+
+    window.addEventListener('resize', resize);
+    resize(); // 초기 실행
+
+    // 속도 증가 함수
+    function increaseSpeed() {
+        if (window.gameRunning) {
+            speed *= 1.05;
+            scoreMultiplier *= 1.1;
+            // 버튼 클릭 시각적 피드백 (선택)
+        }
+    }
+
+    // 키보드 이벤트
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') {
+            penguin.dx = -penguin.speed;
+        } else if (e.key === 'ArrowRight') {
+            penguin.dx = penguin.speed;
+        } else if (e.key === 'ArrowUp') {
+            if (!isUpPressed) {
+                increaseSpeed();
+                isUpPressed = true;
+            }
+        }
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            penguin.dx = 0;
+        } else if (e.key === 'ArrowUp') {
+            isUpPressed = false;
+        }
+    });
+
+    // 모바일 터치 이벤트 (이동)
+    document.addEventListener('touchstart', (e) => {
+        if (!window.gameRunning) return;
+
+        // 버튼 터치는 제외 (이벤트 버블링으로 버튼 리스너가 처리하겠지만, 여기서도 체크 가능)
+        // 하지만 버튼은 별도 리스너를 달았으므로 e.target 체크
+        if (e.target === speedBtn || speedBtn.contains(e.target)) return;
+
+        // 첫 번째 터치 포인트만 고려
+        const touchX = e.touches[0].clientX;
+        const halfWidth = window.innerWidth / 2;
+
+        if (touchX < halfWidth) {
+            penguin.dx = -penguin.speed; // 왼쪽 터치 -> 왼쪽 이동
+        } else {
+            penguin.dx = penguin.speed;  // 오른쪽 터치 -> 오른쪽 이동
+        }
+    }, { passive: false });
+
+    document.addEventListener('touchend', (e) => {
+        if (!window.gameRunning) return;
+
+        // 버튼 터치 해제는 무시
+        if (e.target === speedBtn || speedBtn.contains(e.target)) return;
+
+        // 이동 터치가 떨어졌을 때 정지 (멀티터치 고려하여 touches 길이 체크)
+        // 여기서는 단순화를 위해 모든 터치가 떨어지거나, 이동 관련 터치가 없을 때 멈춤
+        // 하지만 멀티터치(이동+버튼) 상황에서 버튼만 떼도 멈출 수 있음.
+        // 정확히 하려면 touch identifier를 추적해야 하나, 간단히 touches.length로 처리
+        // 버튼을 누르고 있는 상태에서 이동 손가락을 떼면 touches.length는 1이 됨.
+        // 복잡성을 피하기 위해, 화면 터치가 없으면 정지하도록 함.
+        if (e.touches.length === 0) {
+            penguin.dx = 0;
+        }
+    }, { passive: false });
+
+    // 속도 증가 버튼 이벤트
+    speedBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault(); // 기본 동작 방지
+        e.stopPropagation(); // 이동 터치로 전파 방지
+        increaseSpeed();
+    });
+
+    // PC 마우스 클릭 지원
+    speedBtn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        increaseSpeed();
+    });
+
+    startMsg.addEventListener('click', () => {
+        if (!window.gameRunning) {
+            startGame();
+        }
+    });
+
+    function startGame() {
+        window.gameRunning = true;
+        score = 0;
+        speed = 10;
+        scoreMultiplier = 1;
+        obstacles = [];
+        penguin.x = canvas.width / 2 - penguin.width / 2;
+        penguin.wobble = 0;
+        bgZOffset = 0;
+        currentCurve = 0;
+        targetCurve = 0;
+        startMsg.style.display = 'none';
+        speedBtn.style.display = 'flex'; // 게임 시작 시 버튼 보임
+
+        startBgm();
+
+        update();
+    }
+
+    function gameOver() {
+        window.gameRunning = false;
+        cancelAnimationFrame(animationId);
+
+        stopBgm();
+
+        startMsg.innerHTML = `게임 오버!<br>점수: ${score}<br><span style="font-size:16px">클릭하여 다시 시작</span>`;
+        startMsg.style.display = 'block';
+        speedBtn.style.display = 'none'; // 게임 오버 시 버튼 숨김
+    }
+
+    function createObstacle() {
+        const lanes = [-1, 0, 1];
+        const lane = lanes[Math.floor(Math.random() * lanes.length)];
+        const laneWidth = roadWidth / 3.5;
+        const trackX = lane * (laneWidth / roadWidth);
+
+        obstacles.push({
+            trackX: trackX,
+            lane: lane,
+            z: maxZ,
+            width: 80,
+            height: 30,
+            color: '#87CEEB'
+        });
+    }
+
+    function getCurveOffset(z) {
+        const t = z / maxZ;
+        return currentCurve * t * t;
+    }
+
+    function drawBackground() {
+        const centerX = canvas.width / 2;
+
+        // 1. 하늘
+        ctx.fillStyle = '#87CEEB';
+        ctx.fillRect(0, 0, canvas.width, horizonY);
+
+        // 2. 구름 (천천히 흐름)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        clouds.forEach(cloud => {
+            cloud.x -= cloud.speed;
+            if (cloud.x + cloud.w < 0) cloud.x = canvas.width + 50;
+
+            ctx.beginPath();
+            ctx.ellipse(cloud.x, cloud.y, cloud.w, cloud.w * 0.6, 0, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // 3. 산맥 (Parallax Scrolling)
+        const parallaxX = currentCurve * 0.3;
+        const mountainRange = 3000;
+
+        mountains.forEach(mt => {
+            let drawX = mt.x - parallaxX;
+            drawX = (drawX % mountainRange + mountainRange) % mountainRange - 1000;
+
+            ctx.fillStyle = mt.color;
+            ctx.beginPath();
+            ctx.moveTo(drawX, mt.y);
+            ctx.lineTo(drawX + mt.w / 2, mt.y - mt.h);
+            ctx.lineTo(drawX + mt.w, mt.y);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            ctx.beginPath();
+            ctx.moveTo(drawX + mt.w / 2, mt.y - mt.h);
+            ctx.lineTo(drawX + mt.w, mt.y);
+            ctx.lineTo(drawX + mt.w / 2, mt.y);
+            ctx.closePath();
+            ctx.fill();
+        });
+
+        // 4. 눈밭 (바닥)
+        ctx.fillStyle = '#F0F8FF';
+        ctx.fillRect(0, horizonY, canvas.width, canvas.height - horizonY);
+
+        // 5. 길 (Road) 그리기
+        const segmentLength = 50;
+
+        for (let z = maxZ; z > 0; z -= segmentLength) {
+            const zFar = z;
+            const zNear = z - segmentLength;
+
+            const scaleFar = fov / (fov + zFar);
+            const scaleNear = fov / (fov + zNear);
+
+            const yFar = horizonY + (canvas.height - horizonY) * scaleFar;
+            const yNear = horizonY + (canvas.height - horizonY) * scaleNear;
+
+            const wFar = roadWidth * scaleFar;
+            const wNear = roadWidth * scaleNear;
+
+            const xOffsetFar = getCurveOffset(zFar);
+            const xOffsetNear = getCurveOffset(zNear);
+
+            const centerFar = centerX + xOffsetFar;
+            const centerNear = centerX + xOffsetNear;
+
+            if (yNear < horizonY || yFar > canvas.height) continue;
+
+            // 길
+            ctx.fillStyle = (Math.floor((z - bgZOffset) / 200) % 2 === 0) ? '#FFFFFF' : '#F8F8FF';
+            ctx.beginPath();
+            ctx.moveTo(centerFar - wFar/2, yFar);
+            ctx.lineTo(centerFar + wFar/2, yFar);
+            ctx.lineTo(centerNear + wNear/2, yNear);
+            ctx.lineTo(centerNear - wNear/2, yNear);
+            ctx.fill();
+
+            // 경계선
+            ctx.strokeStyle = '#00BFFF';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(centerFar - wFar/2, yFar);
+            ctx.lineTo(centerNear - wNear/2, yNear);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(centerFar + wFar/2, yFar);
+            ctx.lineTo(centerNear + wNear/2, yNear);
+            ctx.stroke();
+
+            // 레인 구분선
+            const laneWFar = wFar / 3;
+            const laneWNear = wNear / 3;
+
+            ctx.strokeStyle = 'rgba(0, 191, 255, 0.3)';
+            ctx.lineWidth = 1;
+
+            ctx.beginPath();
+            ctx.moveTo(centerFar - laneWFar/2, yFar);
+            ctx.lineTo(centerNear - laneWNear/2, yNear);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(centerFar + laneWFar/2, yFar);
+            ctx.lineTo(centerNear + laneWNear/2, yNear);
+            ctx.stroke();
+        }
+    }
+
+    function drawPenguin() {
+        ctx.save();
+
+        const bounceSpeed = Math.max(100 - (speed * 2), 20);
+        const bounce = Math.abs(Math.sin(Date.now() / bounceSpeed)) * 5;
+        const drawY = penguin.y - bounce;
+
+        const centerX = penguin.x + penguin.width / 2;
+        const centerY = drawY + penguin.height;
+
+        ctx.translate(centerX, centerY);
+        ctx.rotate(penguin.wobble * Math.PI / 180);
+        ctx.translate(-centerX, -centerY);
+
+        // --- 뒷모습 그리기 ---
+
+        // 1. 몸통 (검은색 타원)
+        ctx.fillStyle = penguin.color;
+        ctx.beginPath();
+        ctx.ellipse(penguin.x + penguin.width/2, drawY + penguin.height/2, penguin.width/2, penguin.height/2, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2. 꼬리 (검은색 삼각형)
+        ctx.fillStyle = penguin.color;
+        ctx.beginPath();
+        ctx.moveTo(penguin.x + penguin.width/2 - 10, drawY + penguin.height - 15);
+        ctx.lineTo(penguin.x + penguin.width/2 + 10, drawY + penguin.height - 15);
+        ctx.lineTo(penguin.x + penguin.width/2, drawY + penguin.height + 5);
+        ctx.fill();
+
+        // 3. 발 (주황색)
+        const walkCycle = Math.sin(Date.now() / bounceSpeed);
+        const leftFootY = drawY + penguin.height + (walkCycle > 0 ? -3 : 0);
+        const rightFootY = drawY + penguin.height + (walkCycle < 0 ? -3 : 0);
+
+        ctx.fillStyle = '#FFA500';
+        ctx.beginPath();
+        ctx.ellipse(penguin.x + 10, leftFootY, 8, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(penguin.x + penguin.width - 10, rightFootY, 8, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 4. 날개 (파닥거림)
+        const wingAngle = Math.sin(Date.now() / (bounceSpeed/2)) * 0.2;
+
+        ctx.fillStyle = penguin.color;
+
+        // 왼쪽 날개
+        ctx.save();
+        ctx.translate(penguin.x, drawY + 30);
+        ctx.rotate(Math.PI / 4 + wingAngle);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 6, 18, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 오른쪽 날개
+        ctx.save();
+        ctx.translate(penguin.x + penguin.width, drawY + 30);
+        ctx.rotate(-Math.PI / 4 - wingAngle);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 6, 18, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.restore();
+    }
+
+    function drawObstacles() {
+        obstacles.forEach(obs => {
+            const scale = fov / (fov + obs.z);
+            const groundHeight = canvas.height - horizonY;
+            const screenY = horizonY + groundHeight * scale;
+
+            const centerX = canvas.width / 2;
+
+            const curveOffset = getCurveOffset(obs.z);
+            const screenX = (centerX + curveOffset) + (obs.trackX * roadWidth) * scale;
+
+            const screenW = obs.width * scale;
+            const screenH = obs.height * scale;
+
+            obs.screenX = screenX;
+            obs.screenY = screenY;
+            obs.screenW = screenW;
+            obs.screenH = screenH;
+
+            ctx.fillStyle = obs.color;
+            ctx.fillRect(screenX - screenW/2, screenY - screenH, screenW, screenH);
+
+            ctx.strokeStyle = '#5F9EA0';
+            ctx.strokeRect(screenX - screenW/2, screenY - screenH, screenW, screenH);
+        });
+    }
+
+    function update() {
+        if (!window.gameRunning) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        bgZOffset += speed;
+        if (bgZOffset >= 200) {
+            bgZOffset -= 200;
+        }
+
+        curveTimer++;
+        if (curveTimer > 300) {
+            targetCurve = (Math.random() - 0.5) * 3000;
+            curveTimer = 0;
+        }
+        currentCurve += (targetCurve - currentCurve) * 0.005;
+
+        drawBackground();
+
+        penguin.x += penguin.dx;
+
+        if (penguin.x < 0) penguin.x = 0;
+        if (penguin.x + penguin.width > canvas.width) penguin.x = canvas.width - penguin.width;
+
+        if (penguin.dx !== 0) {
+            penguin.wobble += 3 * penguin.wobbleDirection;
+            if (penguin.wobble > 15 || penguin.wobble < -15) {
+                penguin.wobbleDirection *= -1;
+            }
+        } else {
+            penguin.wobble *= 0.8;
+        }
+
+        if (Math.random() < 0.03 + (speed * 0.001)) {
+            createObstacle();
+        }
+
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let obs = obstacles[i];
+            obs.z -= speed;
+
+            if (obs.z < -100) {
+                obstacles.splice(i, 1);
+                score += Math.round(10 * scoreMultiplier);
+                scoreElement.innerText = `Score: ${score}`;
+
+                if (score % 100 === 0) speed += 1;
+            }
+        }
+
+        obstacles.sort((a, b) => b.z - a.z);
+        drawObstacles();
+
+        obstacles.forEach(obs => {
+            if (obs.z < 50 && obs.z > -50) {
+                const obsLeft = obs.screenX - obs.screenW/2;
+                const obsRight = obs.screenX + obs.screenW/2;
+
+                const pLeft = penguin.x + 10;
+                const pRight = penguin.x + penguin.width - 10;
+
+                if (pRight > obsLeft && pLeft < obsRight) {
+                    gameOver();
+                }
+            }
+        });
+
+        drawPenguin();
+
+        animationId = requestAnimationFrame(update);
+    }
+
+    // 초기화 시 버튼 숨김 (게임 시작 전)
+    speedBtn.style.display = 'none';
+
+    drawBackground();
+    drawPenguin();
+
+</script>
+
+</body>
+</html>
