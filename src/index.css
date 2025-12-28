@@ -1,0 +1,76 @@
+body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden; /* 스크롤바 숨김 */
+    background-color: #87CEEB; /* 하늘색 배경 */
+    font-family: 'Arial', sans-serif;
+    touch-action: none; /* 모바일에서 터치 제스처 방지 */
+    user-select: none; /* 텍스트 선택 방지 */
+    -webkit-user-select: none;
+}
+#gameContainer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+#scoreBoard {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    font-size: 24px;
+    font-weight: bold;
+    color: #333;
+    text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.5);
+    pointer-events: none; /* 터치 이벤트 통과 */
+}
+#startMsg {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 40px;
+    font-weight: bold;
+    color: #333;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.8);
+    padding: 40px;
+    border-radius: 20px;
+    cursor: pointer;
+    z-index: 10;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+/* 속도 증가 버튼 스타일 */
+#speedBtn {
+    position: absolute;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    width: 80px;
+    height: 80px;
+    background-color: rgba(255, 69, 0, 0.7); /* 주황색 반투명 */
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+    text-align: center;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    cursor: pointer;
+    z-index: 5;
+    -webkit-tap-highlight-color: transparent;
+}
+#speedBtn:active {
+    background-color: rgba(255, 69, 0, 0.9);
+    transform: translateY(-50%) scale(0.95);
+}
