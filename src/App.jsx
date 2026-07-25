@@ -4,19 +4,42 @@ import { startBgm, stopBgm, playJumpSound, initAudio } from './utils/audio'
 function App() {
   const canvasRef = useRef(null)
   const [score, setScore] = useState(0)
+  const [finalScores, setFinalScores] = useState({ distance: 0, obstacle: 0, total: 0 })
   const [isGameRunning, setIsGameRunning] = useState(false)
   const [isGameOver, setIsGameOver] = useState(false)
+  const [stage, setStage] = useState(1)
+  const [isStageClear, setIsStageClear] = useState(false)
   
+  // 환경 변수 로드
+  const INITIAL_SPEED = Number(import.meta.env.VITE_GAME_INITIAL_SPEED) || 10
+  const SPEED_INCREMENT_RATE = Number(import.meta.env.VITE_GAME_SPEED_INCREMENT_RATE) || 1.05
+  const SCORE_MULTIPLIER_INCREMENT_RATE = Number(import.meta.env.VITE_GAME_SCORE_MULTIPLIER_INCREMENT_RATE) || 1.1
+  
+  const PENGUIN_SPEED = Number(import.meta.env.VITE_PENGUIN_SPEED) || 7
+  const PENGUIN_JUMP_STRENGTH = Number(import.meta.env.VITE_PENGUIN_JUMP_STRENGTH) || 18
+  const PENGUIN_GRAVITY = Number(import.meta.env.VITE_PENGUIN_GRAVITY) || 1.2
+  
+  const OBSTACLE_SPAWN_CHANCE_BASE = Number(import.meta.env.VITE_OBSTACLE_SPAWN_CHANCE_BASE) || 0.03
+  const OBSTACLE_SPAWN_CHANCE_SPEED_FACTOR = Number(import.meta.env.VITE_OBSTACLE_SPAWN_CHANCE_SPEED_FACTOR) || 0.001
+  
+  const SCORE_DISTANCE_DIVISOR = Number(import.meta.env.VITE_SCORE_DISTANCE_DIVISOR) || 50
+  const SCORE_OBSTACLE_BASE = Number(import.meta.env.VITE_SCORE_OBSTACLE_BASE) || 10
+  
+  const STAGE_TARGET_SCORE_BASE = Number(import.meta.env.VITE_STAGE_TARGET_SCORE_BASE) || 500
+
   // 게임 상태 Refs (렌더링 없이 값 유지)
   const gameState = useRef({
     score: 0,
+    lastRenderedScore: 0,
+    distance: 0,
+    obstacleScore: 0,
     speed: 5,
     scoreMultiplier: 1,
     obstacles: [],
     penguin: {
       x: 0, y: 0, width: 50, height: 70, color: '#000000',
-      dx: 0, speed: 7, wobble: 0, wobbleDirection: 1,
-      jumpY: 0, jumpVy: 0, isJumping: false, jumpStrength: 25, gravity: 1.5
+      dx: 0, speed: PENGUIN_SPEED, wobble: 0, wobbleDirection: 1,
+      jumpY: 0, jumpVy: 0, isJumping: false, jumpStrength: PENGUIN_JUMP_STRENGTH, gravity: PENGUIN_GRAVITY
     },
     mountains: [],
     clouds: [],
@@ -26,7 +49,10 @@ function App() {
     curveTimer: 0,
     horizonY: 0,
     isUpPressed: false,
-    animationId: null
+    animationId: null,
+    envSegments: [], 
+    lastGeneratedZ: 0,
+    targetScore: STAGE_TARGET_SCORE_BASE
   })
 
   // 상수
@@ -35,7 +61,7 @@ function App() {
   const ROAD_WIDTH = 1500
 
   // 초기화 함수
-  const initGame = useCallback(() => {
+  const initGame = useCallback((resetStage = true) => {
     const canvas = canvasRef.current
     if (!canvas) return
 
@@ -62,11 +88,26 @@ function App() {
       })
     }
 
+    const initialSegments = [{ start: 0, end: 3000, type: 0 }];
+
+    // 스테이지 리셋 여부에 따라 초기값 설정
+    const currentStage = resetStage ? 1 : gameState.current.stage + 1;
+    const currentSpeed = resetStage ? INITIAL_SPEED : gameState.current.speed * SPEED_INCREMENT_RATE;
+    const currentMultiplier = resetStage ? 1 : gameState.current.scoreMultiplier * SCORE_MULTIPLIER_INCREMENT_RATE;
+    
+    // 점수는 스테이지 넘어가도 유지
+    const currentScore = resetStage ? 0 : gameState.current.score;
+    const currentDistance = resetStage ? 0 : gameState.current.distance;
+    const currentObstacleScore = resetStage ? 0 : gameState.current.obstacleScore;
+
     gameState.current = {
       ...gameState.current,
-      score: 0,
-      speed: 10,
-      scoreMultiplier: 1,
+      score: currentScore,
+      lastRenderedScore: currentScore,
+      distance: currentDistance,
+      obstacleScore: currentObstacleScore,
+      speed: currentSpeed,
+      scoreMultiplier: currentMultiplier,
       obstacles: [],
       mountains,
       clouds,
@@ -74,19 +115,27 @@ function App() {
       currentCurve: 0,
       targetCurve: 0,
       curveTimer: 0,
+      envSegments: initialSegments,
+      lastGeneratedZ: 3000 + currentDistance, // 현재 거리 기준으로 생성
+      stage: currentStage,
+      targetScore: currentScore + (STAGE_TARGET_SCORE_BASE * currentStage), // 목표 점수 누적
       penguin: {
         ...gameState.current.penguin,
-        x: canvas.width / 2 - 25, // width 50 / 2
+        x: canvas.width / 2 - 25, 
         wobble: 0,
         jumpY: 0,
         isJumping: false,
-        dx: 0
+        dx: 0,
+        speed: PENGUIN_SPEED,
+        jumpStrength: PENGUIN_JUMP_STRENGTH,
+        gravity: PENGUIN_GRAVITY
       }
     }
     
-    setScore(0)
+    setScore(currentScore)
+    setStage(currentStage)
     resize()
-  }, [])
+  }, [INITIAL_SPEED, PENGUIN_SPEED, PENGUIN_JUMP_STRENGTH, PENGUIN_GRAVITY, STAGE_TARGET_SCORE_BASE, SPEED_INCREMENT_RATE, SCORE_MULTIPLIER_INCREMENT_RATE])
 
   const resize = useCallback(() => {
     const canvas = canvasRef.current
@@ -99,7 +148,6 @@ function App() {
     gameState.current.horizonY = horizonY
     gameState.current.penguin.y = canvas.height - 150
     
-    // 게임 중이 아닐 때 펭귄 위치 중앙 정렬
     if (!isGameRunning) {
       gameState.current.penguin.x = canvas.width / 2 - gameState.current.penguin.width / 2
     }
@@ -110,16 +158,26 @@ function App() {
   useEffect(() => {
     window.addEventListener('resize', resize)
     resize()
-    // 초기 렌더링 시 배경 한번 그리기
     requestAnimationFrame(drawFrame)
     return () => window.removeEventListener('resize', resize)
   }, [resize])
 
   const startGame = () => {
     initAudio()
-    initGame()
+    initGame(true) // 처음부터 시작
     setIsGameRunning(true)
     setIsGameOver(false)
+    setIsStageClear(false)
+    startBgm()
+    
+    if (gameState.current.animationId) cancelAnimationFrame(gameState.current.animationId)
+    gameState.current.animationId = requestAnimationFrame(gameLoop)
+  }
+
+  const nextStage = () => {
+    initGame(false) // 다음 스테이지로
+    setIsGameRunning(true)
+    setIsStageClear(false)
     startBgm()
     
     if (gameState.current.animationId) cancelAnimationFrame(gameState.current.animationId)
@@ -131,12 +189,29 @@ function App() {
     setIsGameOver(true)
     stopBgm()
     cancelAnimationFrame(gameState.current.animationId)
+    
+    const distanceScore = Math.floor(gameState.current.distance / SCORE_DISTANCE_DIVISOR)
+    const obstacleScore = gameState.current.obstacleScore
+    setFinalScores({
+        distance: distanceScore,
+        obstacle: obstacleScore,
+        total: distanceScore + obstacleScore
+    })
+  }
+
+  const stageClear = () => {
+    setIsGameRunning(false)
+    setIsStageClear(true)
+    stopBgm() // 혹은 클리어 효과음 재생
+    cancelAnimationFrame(gameState.current.animationId)
   }
 
   const increaseSpeed = () => {
     if (isGameRunning) {
+      // 수동 속도 증가는 스테이지 시스템에서는 제거하거나 보너스로 유지
+      // 여기서는 스테이지 클리어 시에만 속도가 증가하도록 변경하므로 주석 처리하거나
+      // 일시적인 부스트 기능으로 변경 가능. 일단 유지하되 스테이지 밸런스에 영향 줄 수 있음.
       gameState.current.speed *= 1.05
-      gameState.current.scoreMultiplier *= 1.1
     }
   }
 
@@ -152,27 +227,26 @@ function App() {
   // --- 게임 로직 헬퍼 함수들 ---
 
   const createObstacle = () => {
-    // trackX는 도로 중심(0)을 기준으로 -0.5 ~ 0.5 범위가 도로 전체 폭입니다.
-    // 장애물이 도로 밖으로 나가지 않도록 -0.45 ~ 0.45 범위 내에서 생성합니다.
     const trackX = (Math.random() * 0.9) - 0.45; 
-
-    const type = Math.random() < 0.7 ? 0 : 1 // 0: Hole, 1: Iceberg
+    const type = Math.random() < 0.7 ? 0 : 1 
 
     let width, height;
-    let points = []; // 구멍 모양을 위한 점들
+    let points = [];
 
     if (type === 0) { // 구멍
         width = 150 + Math.random() * 150;
         height = 40 + Math.random() * 30;
         
-        // 깨진 얼음 모양을 위한 불규칙한 정점 생성
-        const numPoints = 10 + Math.floor(Math.random() * 5); // 10~14개
+        const numPoints = 10 + Math.floor(Math.random() * 5);
         let angle = 0;
         for (let i = 0; i < numPoints; i++) {
             angle += (Math.PI * 2) / numPoints;
-            // 불규칙성 추가 (반지름의 0.4 ~ 1.0 배)
             const r = 0.4 + Math.random() * 0.6; 
-            points.push({ angle, r });
+            points.push({ 
+                xFactor: Math.cos(angle) * r, 
+                yFactor: Math.sin(angle) * r,
+                r: r 
+            });
         }
     } else { // 빙산
         width = 80 + Math.random() * 100;
@@ -198,7 +272,7 @@ function App() {
   // --- 그리기 함수들 ---
 
   const drawBackground = (ctx, canvas) => {
-    const { horizonY, currentCurve, bgZOffset, mountains, clouds } = gameState.current
+    const { horizonY, currentCurve, bgZOffset, mountains, clouds, envSegments, distance } = gameState.current
     const centerX = canvas.width / 2
 
     // 하늘
@@ -241,12 +315,13 @@ function App() {
       ctx.fill()
     })
 
-    // 땅
-    ctx.fillStyle = '#F0F8FF'
-    ctx.fillRect(0, horizonY, canvas.width, canvas.height - horizonY)
-
-    // 도로 (세그먼트)
+    // 도로 및 배경 땅 그리기
     const segmentLength = 50
+    
+    ctx.beginPath(); 
+    const borderPath = new Path2D();
+    const lanePath = new Path2D();
+
     for (let z = MAX_Z; z > 0; z -= segmentLength) {
       const zFar = z
       const zNear = z - segmentLength
@@ -254,6 +329,9 @@ function App() {
       const scaleNear = FOV / (FOV + zNear)
       const yFar = horizonY + (canvas.height - horizonY) * scaleFar
       const yNear = horizonY + (canvas.height - horizonY) * scaleNear
+      
+      if (yNear < horizonY || yFar > canvas.height) continue
+
       const wFar = ROAD_WIDTH * scaleFar
       const wNear = ROAD_WIDTH * scaleNear
       const xOffsetFar = getCurveOffset(zFar)
@@ -261,8 +339,29 @@ function App() {
       const centerFar = centerX + xOffsetFar
       const centerNear = centerX + xOffsetNear
 
-      if (yNear < horizonY || yFar > canvas.height) continue
+      const worldZ = distance + z;
+      const segment = envSegments.find(s => s.start <= worldZ && s.end > worldZ);
+      const envType = segment ? segment.type : 0; 
 
+      // 왼쪽 땅
+      ctx.fillStyle = (envType === 1) ? '#1E90FF' : '#F0F8FF'; 
+      ctx.beginPath();
+      ctx.moveTo(0, yFar);
+      ctx.lineTo(centerFar - wFar/2, yFar);
+      ctx.lineTo(centerNear - wNear/2, yNear);
+      ctx.lineTo(0, yNear);
+      ctx.fill();
+
+      // 오른쪽 땅
+      ctx.fillStyle = (envType === 2) ? '#1E90FF' : '#F0F8FF'; 
+      ctx.beginPath();
+      ctx.moveTo(centerFar + wFar/2, yFar);
+      ctx.lineTo(canvas.width, yFar);
+      ctx.lineTo(canvas.width, yNear);
+      ctx.lineTo(centerNear + wNear/2, yNear);
+      ctx.fill();
+
+      // 도로 바닥
       ctx.fillStyle = (Math.floor((z - bgZOffset) / 200) % 2 === 0) ? '#FFFFFF' : '#F8F8FF'
       ctx.beginPath()
       ctx.moveTo(centerFar - wFar/2, yFar)
@@ -271,32 +370,26 @@ function App() {
       ctx.lineTo(centerNear - wNear/2, yNear)
       ctx.fill()
 
-      // 도로 외곽선
-      ctx.strokeStyle = '#00BFFF'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.moveTo(centerFar - wFar/2, yFar)
-      ctx.lineTo(centerNear - wNear/2, yNear)
-      ctx.stroke()
-      ctx.beginPath()
-      ctx.moveTo(centerFar + wFar/2, yFar)
-      ctx.lineTo(centerNear + wNear/2, yNear)
-      ctx.stroke()
+      borderPath.moveTo(centerFar - wFar/2, yFar)
+      borderPath.lineTo(centerNear - wNear/2, yNear)
+      borderPath.moveTo(centerFar + wFar/2, yFar)
+      borderPath.lineTo(centerNear + wNear/2, yNear)
 
-      // 차선
       const laneWFar = wFar / 3
       const laneWNear = wNear / 3
-      ctx.strokeStyle = 'rgba(0, 191, 255, 0.3)'
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.moveTo(centerFar - laneWFar/2, yFar)
-      ctx.lineTo(centerNear - laneWNear/2, yNear)
-      ctx.stroke()
-      ctx.beginPath()
-      ctx.moveTo(centerFar + laneWFar/2, yFar)
-      ctx.lineTo(centerNear + laneWNear/2, yNear)
-      ctx.stroke()
+      lanePath.moveTo(centerFar - laneWFar/2, yFar)
+      lanePath.lineTo(centerNear - laneWNear/2, yNear)
+      lanePath.moveTo(centerFar + laneWFar/2, yFar)
+      lanePath.lineTo(centerNear + laneWNear/2, yNear)
     }
+
+    ctx.strokeStyle = '#00BFFF'
+    ctx.lineWidth = 2
+    ctx.stroke(borderPath)
+
+    ctx.strokeStyle = 'rgba(0, 191, 255, 0.3)'
+    ctx.lineWidth = 1
+    ctx.stroke(lanePath)
   }
 
   const drawObstacles = (ctx, canvas) => {
@@ -326,8 +419,8 @@ function App() {
 
         if (obs.points && obs.points.length > 0) {
             obs.points.forEach((pt, i) => {
-                const px = screenX + Math.cos(pt.angle) * radiusX * pt.r;
-                const py = centerY + Math.sin(pt.angle) * radiusY * pt.r;
+                const px = screenX + pt.xFactor * radiusX;
+                const py = centerY + pt.yFactor * radiusY;
                 if (i === 0) ctx.moveTo(px, py);
                 else ctx.lineTo(px, py);
             });
@@ -338,21 +431,19 @@ function App() {
         ctx.closePath()
         ctx.fill()
 
-        // 깨진 얼음 테두리
         ctx.strokeStyle = '#E0F7FA'
         ctx.lineWidth = 2
         ctx.stroke()
 
-        // 주변 잔금 (Cracks)
         ctx.beginPath()
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'
         if (obs.points) {
             obs.points.forEach((pt, i) => {
-                if (i % 2 === 0) { // 격주로 금이 감
-                    const px = screenX + Math.cos(pt.angle) * radiusX * pt.r;
-                    const py = centerY + Math.sin(pt.angle) * radiusY * pt.r;
-                    const crackX = screenX + Math.cos(pt.angle) * radiusX * (pt.r + 0.3);
-                    const crackY = centerY + Math.sin(pt.angle) * radiusY * (pt.r + 0.3);
+                if (i % 2 === 0) { 
+                    const px = screenX + pt.xFactor * radiusX;
+                    const py = centerY + pt.yFactor * radiusY;
+                    const crackX = screenX + pt.xFactor * radiusX * (1 + 0.3/pt.r);
+                    const crackY = centerY + pt.yFactor * radiusY * (1 + 0.3/pt.r);
                     ctx.moveTo(px, py);
                     ctx.lineTo(crackX, crackY);
                 }
@@ -392,7 +483,6 @@ function App() {
     const centerX = penguin.x + penguin.width / 2
     const centerY = drawY + penguin.height
 
-    // 그림자
     if (penguin.isJumping) {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.2)'
       ctx.beginPath()
@@ -405,14 +495,11 @@ function App() {
     ctx.rotate(penguin.wobble * Math.PI / 180)
     ctx.translate(-centerX, -centerY)
 
-    // 몸통
     ctx.fillStyle = penguin.color
     ctx.beginPath()
     ctx.ellipse(penguin.x + penguin.width/2, drawY + penguin.height/2, penguin.width/2, penguin.height/2, 0, 0, Math.PI * 2)
     ctx.fill()
 
-    // 배 (흰색 부분 - 원본 코드에 없었으나 추가하면 좋음, 일단 원본 유지)
-    // 꼬리?
     ctx.fillStyle = penguin.color
     ctx.beginPath()
     ctx.moveTo(penguin.x + penguin.width/2 - 10, drawY + penguin.height - 15)
@@ -420,7 +507,6 @@ function App() {
     ctx.lineTo(penguin.x + penguin.width/2, drawY + penguin.height + 5)
     ctx.fill()
 
-    // 발
     const walkCycle = penguin.isJumping ? 0 : Math.sin(Date.now() / bounceSpeed)
     const leftFootY = drawY + penguin.height + (walkCycle > 0 ? -3 : 0)
     const rightFootY = drawY + penguin.height + (walkCycle < 0 ? -3 : 0)
@@ -433,7 +519,6 @@ function App() {
     ctx.ellipse(penguin.x + penguin.width - 10, rightFootY, 8, 4, 0, 0, Math.PI * 2)
     ctx.fill()
 
-    // 날개
     const wingAngle = penguin.isJumping ? 0.5 : Math.sin(Date.now() / (bounceSpeed/2)) * 0.2
     ctx.fillStyle = penguin.color
     
@@ -456,19 +541,13 @@ function App() {
     ctx.restore()
   }
 
-  // --- 메인 게임 루프 ---
   const gameLoop = () => {
-    if (!isGameRunning) return // 상태가 바뀌면 루프 중단 (useEffect 의존성 문제 해결 위해 ref 체크가 나을 수 있음)
-    // 하지만 여기선 requestAnimationFrame 내부에서 재귀 호출하므로, 
-    // 외부 변수(isGameRunning state)는 클로저에 캡처됨. 
-    // 따라서 ref를 사용하거나, 루프 안에서 체크해야 함.
-    // 여기서는 gameState.current.animationId를 통해 제어하므로 일단 진행.
+    if (!isGameRunning) return 
     
     update()
     gameState.current.animationId = requestAnimationFrame(gameLoop)
   }
 
-  // gameLoop에서 호출할 update 함수 (state가 아닌 ref 기반으로 동작해야 함)
   const update = () => {
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
@@ -477,9 +556,43 @@ function App() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // 배경 업데이트
     state.bgZOffset += state.speed
     if (state.bgZOffset >= 200) state.bgZOffset -= 200
+
+    state.distance += state.speed
+    const distanceScore = Math.floor(state.distance / SCORE_DISTANCE_DIVISOR)
+    
+    state.score = distanceScore + state.obstacleScore
+    
+    if (state.score !== state.lastRenderedScore) {
+        setScore(state.score)
+        state.lastRenderedScore = state.score
+    }
+
+    // 스테이지 클리어 체크
+    if (state.score >= state.targetScore) {
+        stageClear()
+        return // 루프 중단
+    }
+
+    if (state.envSegments.length > 0 && state.envSegments[0].end < state.distance - 100) {
+        state.envSegments.shift();
+    }
+
+    while (state.lastGeneratedZ < state.distance + MAX_Z + 1000) {
+        const startZ = state.lastGeneratedZ;
+        const length = 2000 + Math.random() * 3000; 
+        const endZ = startZ + length;
+        
+        const rand = Math.random();
+        let type = 0;
+        if (rand < 0.5) type = 0;
+        else if (rand < 0.75) type = 1;
+        else type = 2;
+
+        state.envSegments.push({ start: startZ, end: endZ, type: type });
+        state.lastGeneratedZ = endZ;
+    }
 
     state.curveTimer++
     if (state.curveTimer > 300) {
@@ -490,13 +603,11 @@ function App() {
 
     drawBackground(ctx, canvas)
 
-    // 펭귄 이동
     penguin.x += penguin.dx
     
-    // 도로 안쪽으로 이동 제한 (파란 선 안쪽)
     const centerX = canvas.width / 2
     const roadHalfWidth = ROAD_WIDTH / 2
-    const padding = 20 // 파란 선을 밟지 않도록 약간의 여유
+    const padding = 20 
     
     const minX = Math.max(0, centerX - roadHalfWidth + padding)
     const maxX = Math.min(canvas.width - penguin.width, centerX + roadHalfWidth - penguin.width - padding)
@@ -504,7 +615,6 @@ function App() {
     if (penguin.x < minX) penguin.x = minX
     if (penguin.x > maxX) penguin.x = maxX
 
-    // 점프 물리
     if (penguin.isJumping) {
       penguin.jumpY += penguin.jumpVy
       penguin.jumpVy -= penguin.gravity
@@ -514,7 +624,6 @@ function App() {
       }
     }
 
-    // 뒤뚱거림
     if (penguin.dx !== 0 && !penguin.isJumping) {
       penguin.wobble += 3 * penguin.wobbleDirection
       if (penguin.wobble > 15 || penguin.wobble < -15) {
@@ -524,28 +633,25 @@ function App() {
       penguin.wobble *= 0.8
     }
 
-    // 장애물 생성
-    if (Math.random() < 0.03 + (state.speed * 0.001)) {
+    if (Math.random() < OBSTACLE_SPAWN_CHANCE_BASE + (state.speed * OBSTACLE_SPAWN_CHANCE_SPEED_FACTOR)) {
       createObstacle()
     }
 
-    // 장애물 이동 및 충돌 처리
     for (let i = state.obstacles.length - 1; i >= 0; i--) {
       let obs = state.obstacles[i]
       obs.z -= state.speed
 
       if (obs.z < -100) {
         state.obstacles.splice(i, 1)
-        state.score += Math.round(10 * state.scoreMultiplier)
-        setScore(state.score) // React State 업데이트
-        if (state.score % 100 === 0) state.speed += 1
+        state.obstacleScore += Math.round(SCORE_OBSTACLE_BASE * state.scoreMultiplier)
+        // 스테이지 시스템에서는 자동 속도 증가 제거 (스테이지 클리어 시 증가)
+        // if (state.score % 100 === 0) state.speed += 1
       }
     }
 
     state.obstacles.sort((a, b) => b.z - a.z)
     drawObstacles(ctx, canvas)
 
-    // 충돌 감지
     state.obstacles.forEach(obs => {
       if (obs.z < 50 && obs.z > -50) {
         const obsLeft = obs.screenX - obs.screenW/2
@@ -554,9 +660,9 @@ function App() {
         const pRight = penguin.x + penguin.width - 10
 
         if (pRight > obsLeft && pLeft < obsRight) {
-          if (obs.type === 0) { // 구멍
+          if (obs.type === 0) { 
              if (penguin.jumpY <= 40) gameOver()
-          } else { // 빙산
+          } else { 
              gameOver()
           }
         }
@@ -566,7 +672,6 @@ function App() {
     drawPenguin(ctx)
   }
   
-  // 단순 그리기 (게임 정지 상태일 때)
   const drawFrame = () => {
       const canvas = canvasRef.current
       if(!canvas) return
@@ -576,7 +681,6 @@ function App() {
       drawPenguin(ctx)
   }
 
-  // 키보드 이벤트
   useEffect(() => {
     const handleKeyDown = (e) => {
       const { penguin } = gameState.current
@@ -609,12 +713,10 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [isGameRunning]) // isGameRunning 의존성 추가
+  }, [isGameRunning]) 
 
-  // 터치 이벤트 핸들러
   const handleTouchStart = (e) => {
     if (!isGameRunning) return
-    // 버튼 터치는 별도 핸들러가 처리
     
     const touchX = e.touches[0].clientX
     const touchY = e.touches[0].clientY
@@ -646,7 +748,6 @@ function App() {
     }
   }
 
-  // 게임 루프 시작/정지 관리
   useEffect(() => {
       if (isGameRunning) {
           gameState.current.animationId = requestAnimationFrame(gameLoop)
@@ -662,14 +763,30 @@ function App() {
         onTouchEnd={handleTouchEnd}
     >
         <canvas ref={canvasRef} id="gameCanvas"></canvas>
-        <div id="scoreBoard">Score: {score}</div>
+        <div id="scoreBoard">
+            Stage: {stage} | Score: {score} / {gameState.current.targetScore}
+        </div>
         
         {(!isGameRunning) && (
-            <div id="startMsg" onClick={startGame}>
+            <div id="startMsg" onClick={isStageClear ? nextStage : startGame}>
                 {isGameOver ? (
                     <>
-                        게임 오버!<br/>점수: {score}<br/>
+                        게임 오버!<br/>
+                        <div style={{fontSize: '24px', margin: '10px 0'}}>
+                            최종 점수: {finalScores.total}<br/>
+                            <span style={{fontSize: '16px', color: '#555'}}>
+                                (거리: {finalScores.distance} + 장애물: {finalScores.obstacle})
+                            </span>
+                        </div>
                         <span style={{fontSize:'16px'}}>클릭하여 다시 시작</span>
+                    </>
+                ) : isStageClear ? (
+                    <>
+                        스테이지 {stage} 클리어!<br/>
+                        <div style={{fontSize: '24px', margin: '10px 0'}}>
+                            현재 점수: {score}<br/>
+                        </div>
+                        <span style={{fontSize:'16px'}}>클릭하여 다음 스테이지로</span>
                     </>
                 ) : (
                     <>
