@@ -9,7 +9,17 @@ function App() {
   const [isGameOver, setIsGameOver] = useState(false)
   const [stage, setStage] = useState(1)
   const [isStageClear, setIsStageClear] = useState(false)
-  
+  const [isPaused, setIsPaused] = useState(false)
+
+  // 프레임률에 무관한 고정 시뮬레이션(60Hz)용 상태
+  const STEP = 1 / 60
+  const simAccumulator = useRef(0)
+  const lastTimeRef = useRef(0)
+
+  // 렌더링과 무관하게 항상 최신 값을 참조하기 위한 ref
+  const isRunningRef = useRef(isGameRunning)
+  const pausedRef = useRef(false)
+
   // 환경 변수 로드
   const INITIAL_SPEED = Number(import.meta.env.VITE_GAME_INITIAL_SPEED) || 10
   const SPEED_INCREMENT_RATE = Number(import.meta.env.VITE_GAME_SPEED_INCREMENT_RATE) || 1.05
@@ -20,7 +30,7 @@ function App() {
   const PENGUIN_GRAVITY = Number(import.meta.env.VITE_PENGUIN_GRAVITY) || 1.2
   
   const OBSTACLE_SPAWN_CHANCE_BASE = Number(import.meta.env.VITE_OBSTACLE_SPAWN_CHANCE_BASE) || 0.03
-  const OBSTACLE_SPAWN_CHANCE_SPEED_FACTOR = Number(import.meta.env.VITE_OBSTACLE_SPAWN_CHANCE_SPEED_FACTOR) || 0.001
+  const OBSTACLE_SPAWN_CHANCE_SPEED_FACTOR = Number(import.meta.env.VITE_OBSTACLE_SPAWN_CHANCE_SPEED_FACTOR) || 0.0005
   
   const SCORE_DISTANCE_DIVISOR = Number(import.meta.env.VITE_SCORE_DISTANCE_DIVISOR) || 50
   const SCORE_OBSTACLE_BASE = Number(import.meta.env.VITE_SCORE_OBSTACLE_BASE) || 10
@@ -59,6 +69,7 @@ function App() {
   const MAX_Z = 3000
   const FOV = 300
   const ROAD_WIDTH = 1500
+  const MAX_SPEED = Number(import.meta.env.VITE_GAME_MAX_SPEED) || 45
 
   // 초기화 함수
   const initGame = useCallback((resetStage = true) => {
@@ -92,7 +103,7 @@ function App() {
 
     // 스테이지 리셋 여부에 따라 초기값 설정
     const currentStage = resetStage ? 1 : gameState.current.stage + 1;
-    const currentSpeed = resetStage ? INITIAL_SPEED : gameState.current.speed * SPEED_INCREMENT_RATE;
+    const currentSpeed = resetStage ? INITIAL_SPEED : Math.min(MAX_SPEED, gameState.current.speed * SPEED_INCREMENT_RATE);
     const currentMultiplier = resetStage ? 1 : gameState.current.scoreMultiplier * SCORE_MULTIPLIER_INCREMENT_RATE;
     
     // 점수는 스테이지 넘어가도 유지
@@ -148,48 +159,51 @@ function App() {
     gameState.current.horizonY = horizonY
     gameState.current.penguin.y = canvas.height - 150
     
-    if (!isGameRunning) {
+    if (!isRunningRef.current) {
       gameState.current.penguin.x = canvas.width / 2 - gameState.current.penguin.width / 2
     }
     
     gameState.current.mountains.forEach(mt => { mt.y = horizonY })
-  }, [isGameRunning])
+  }, [])
 
   useEffect(() => {
     window.addEventListener('resize', resize)
     resize()
-    requestAnimationFrame(drawFrame)
     return () => window.removeEventListener('resize', resize)
-  }, [resize])
+  }, [])
 
   const startGame = () => {
     initAudio()
     initGame(true) // 처음부터 시작
+    isRunningRef.current = true
+    pausedRef.current = false
+    lastTimeRef.current = 0
+    simAccumulator.current = 0
     setIsGameRunning(true)
     setIsGameOver(false)
     setIsStageClear(false)
+    setIsPaused(false)
     startBgm()
-    
-    if (gameState.current.animationId) cancelAnimationFrame(gameState.current.animationId)
-    gameState.current.animationId = requestAnimationFrame(gameLoop)
   }
 
   const nextStage = () => {
-    initGame(false) // 다음 스테이지로
+    initGame(false) // 다음 스테지로
+    isRunningRef.current = true
+    pausedRef.current = false
+    lastTimeRef.current = 0
+    simAccumulator.current = 0
     setIsGameRunning(true)
     setIsStageClear(false)
+    setIsPaused(false)
     startBgm()
-    
-    if (gameState.current.animationId) cancelAnimationFrame(gameState.current.animationId)
-    gameState.current.animationId = requestAnimationFrame(gameLoop)
   }
 
   const gameOver = () => {
+    isRunningRef.current = false
     setIsGameRunning(false)
     setIsGameOver(true)
     stopBgm()
-    cancelAnimationFrame(gameState.current.animationId)
-    
+
     const distanceScore = Math.floor(gameState.current.distance / SCORE_DISTANCE_DIVISOR)
     const obstacleScore = gameState.current.obstacleScore
     setFinalScores({
@@ -200,24 +214,30 @@ function App() {
   }
 
   const stageClear = () => {
+    isRunningRef.current = false
     setIsGameRunning(false)
     setIsStageClear(true)
-    stopBgm() // 혹은 클리어 효과음 재생
-    cancelAnimationFrame(gameState.current.animationId)
+    stopBgm()
+  }
+
+  const togglePause = () => {
+    if (!isRunningRef.current) return
+    const next = !pausedRef.current
+    pausedRef.current = next
+    setIsPaused(next)
+    if (next) stopBgm()
+    else startBgm()
   }
 
   const increaseSpeed = () => {
-    if (isGameRunning) {
-      // 수동 속도 증가는 스테이지 시스템에서는 제거하거나 보너스로 유지
-      // 여기서는 스테이지 클리어 시에만 속도가 증가하도록 변경하므로 주석 처리하거나
-      // 일시적인 부스트 기능으로 변경 가능. 일단 유지하되 스테이지 밸런스에 영향 줄 수 있음.
-      gameState.current.speed *= 1.05
+    if (isRunningRef.current) {
+      gameState.current.speed = Math.min(MAX_SPEED, gameState.current.speed * 1.05)
     }
   }
 
   const jump = () => {
     const { penguin } = gameState.current
-    if (!penguin.isJumping && isGameRunning) {
+    if (!penguin.isJumping && isRunningRef.current) {
       penguin.isJumping = true
       penguin.jumpVy = penguin.jumpStrength
       playJumpSound()
@@ -541,13 +561,6 @@ function App() {
     ctx.restore()
   }
 
-  const gameLoop = () => {
-    if (!isGameRunning) return 
-    
-    update()
-    gameState.current.animationId = requestAnimationFrame(gameLoop)
-  }
-
   const update = () => {
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
@@ -585,7 +598,7 @@ function App() {
         const endZ = startZ + length;
         
         const rand = Math.random();
-        let type = 0;
+        let type;
         if (rand < 0.5) type = 0;
         else if (rand < 0.75) type = 1;
         else type = 2;
@@ -688,13 +701,10 @@ function App() {
         penguin.dx = -penguin.speed
       } else if (e.key === 'ArrowRight') {
         penguin.dx = penguin.speed
-      } else if (e.key === 'ArrowUp') {
-        if (!gameState.current.isUpPressed) {
-          increaseSpeed()
-          gameState.current.isUpPressed = true
-        }
       } else if (e.key === ' ') {
         jump()
+      } else if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+        togglePause()
       }
     }
 
@@ -702,8 +712,6 @@ function App() {
       const { penguin } = gameState.current
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         penguin.dx = 0
-      } else if (e.key === 'ArrowUp') {
-        gameState.current.isUpPressed = false
       }
     }
 
@@ -713,7 +721,7 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [isGameRunning]) 
+  }, [])
 
   const handleTouchStart = (e) => {
     if (!isGameRunning) return
@@ -742,18 +750,44 @@ function App() {
   }
 
   const handleTouchEnd = (e) => {
-    if (!isGameRunning) return
-    if (e.touches.length === 0) {
+    if (!isRunningRef.current) return
+    if (e.changedTouches.length === 0) {
         gameState.current.penguin.dx = 0
     }
   }
 
   useEffect(() => {
-      if (isGameRunning) {
-          gameState.current.animationId = requestAnimationFrame(gameLoop)
+      let mounted = true
+      const loop = (timestamp) => {
+          if (!mounted) return
+          const now = timestamp / 1000
+          if (!lastTimeRef.current) lastTimeRef.current = now
+          const dt = now - lastTimeRef.current
+          lastTimeRef.current = now
+
+          if (isRunningRef.current && !pausedRef.current) {
+              simAccumulator.current += dt
+              if (simAccumulator.current > STEP * 5) simAccumulator.current = STEP * 5
+              while (simAccumulator.current >= STEP) {
+                  update()
+                  simAccumulator.current -= STEP
+              }
+          } else {
+              drawFrame()
+          }
+
+          gameState.current.animationId = requestAnimationFrame(loop)
       }
-      return () => cancelAnimationFrame(gameState.current.animationId)
-  }, [isGameRunning])
+
+      lastTimeRef.current = 0
+      simAccumulator.current = 0
+      gameState.current.animationId = requestAnimationFrame(loop)
+
+      return () => {
+          mounted = false
+          if (gameState.current.animationId) cancelAnimationFrame(gameState.current.animationId)
+      }
+  }, [])
 
 
   return (
@@ -791,13 +825,20 @@ function App() {
                 ) : (
                     <>
                         클릭하여 시작<br/>
-                        <span style={{fontSize:'20px'}}>(이동: 방향키/터치, 점프: 스페이스/펭귄터치)</span>
+                        <span style={{fontSize:'20px'}}>(이동: 방향키/터치, 점프: 스페이스, 증속: 속도버튼, 일시정지: P/Esc)</span>
                     </>
                 )}
             </div>
         )}
 
-        {isGameRunning && (
+        {isPaused && isGameRunning && (
+            <div id="startMsg" onClick={togglePause}>
+                <span style={{fontSize: '40px'}}>일시정지</span><br/>
+                <span style={{fontSize:'18px'}}>클릭 또는 P키로 계속하기</span>
+            </div>
+        )}
+
+        {isGameRunning && !isPaused && (
             <div 
                 id="speedBtn" 
                 onTouchStart={(e) => { e.stopPropagation(); increaseSpeed(); }}
